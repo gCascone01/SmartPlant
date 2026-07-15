@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flower Chat</title>
+    <script src="/static/user_check.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <link rel="icon" href="/static/favicon-32x32.png">
+    <link rel="stylesheet" href="/static/flower_page_style.css">
+</head>
+
+<body>
+    <div class="overlay"></div>
+    
+    <div id="dashboard">
+        <div id="left-panel" class="panel">
+            <h2 id="image-title">Title</h2>
+            <div id="art-container">
+                <img src="/get_art" class="art-reveal visible" id="current-art">
+            </div>
+        </div>
+
+        <div id="right-column">
+            
+            <div id="chat-panel" class="panel">
+                <div id="welcome-title">
+                    <h3 id="welcome"></h3>
+                </div>
+                
+                <div id="chat-history">
+                    <!-- Messages will be dynamically appended here -->
+                </div>
+
+                <div id="chat-bar">
+                    <div id="message-input">
+                        <a id="emoji">🌿</a>
+                        <textarea rows="1" id="message" placeholder="Type your message to the plant..."></textarea>
+                    </div>
+                    <button id="send-to-llm">Send</button>
+                </div>
+            </div>
+            
+            <div id="action-panel" class="panel">
+                <button id="username_button">Change Name</button>
+                <button id="intruction_button">Instructions</button>
+                <button id="spray_button">Spray Leaves</button>
+                <button id="force_art_button">Force New Painting</button>
+                <button id="logout">Logout</button>
+            </div>
+            
+        </div>
+    </div>
+
+    <div id="instruction_modal" class="modal">
+        <div id="modal_content">
+            <span id="close">&times;</span>
+            <h2>Instructions for Use</h2>
+            <p>Here you can converse with the plant.</p>
+            <ul id="instructions_list">
+                <li>Type your message in the text field and press "Send" to submit.</li>
+                <li>Use the "Spray Leaves" button if you have misted the plant with water.</li>
+                <li>Press "Logout" to disconnect from the system.</li>
+                <li>If you are inactive for three minutes, you will be automatically disconnected.</li>
+                <li>Watering should be performed as close to the sensor as possible.</li>
+            </ul>
+        </div>
+    </div>
+
+    <div id="name_modal" class="modal">
+        <div id="modal_name_content">
+            <span id="close_username">&times;</span>
+            <h2>What is your name?</h2>
+            <div id="input_modal">
+                <input type="text" id="username" autocomplete="off" placeholder="Type your name...">
+            </div>
+            <div id="username_modal_div">
+                <button id="send_name">Submit</button>
+            </div>
+        </div>
+    </div>
+</body>
+
+<script src="/static/flower_page_script.js"></script>
+
+</html>

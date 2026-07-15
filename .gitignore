@@ -1,0 +1,21 @@
+# Environments
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Environment Variables (Secrets)
+.env
+
+# Logs and generated data
+access.log
+sensors_log.jsonl
+art.png
+
+plant_thresholds.json
+need_keys.json
+watered_status.json
+spray_status.json
+*firebase-adminsdk*.json
