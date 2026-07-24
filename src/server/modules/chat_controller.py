@@ -1,18 +1,26 @@
+import threading, json
 from flask import request, jsonify, session # type: ignore
-import threading
-import json
 from datetime import datetime
+
 from modules import globals, ai_pipeline # type: ignore
 from modules.affective_engine import analyze_user_sentiment, update_plant_mood # type: ignore
 from modules.tools import flower_state # type: ignore
 
 def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, random_requests, db, update_user, BASE_DIR, is_day):
+
+    # =====================================================================
+    # SECTION 1: Main Chat Endpoint & Session/Connection Validation
+    # =====================================================================
     
     @app.route('/message', methods=['POST'])
     def flower_response():
-        """Handle user message, process 2D circumplex affect vector, and update pipelines."""
+        """
+        Handles incoming user messages, processes temporal gaps, polls sensors,
+        and triggers both the affective computing and conversational AI pipelines.
+        """
         global chat
 
+        # Validate active session state
         if globals.active_session_id is None or session['session_id'] != globals.active_session_id:
             return jsonify(status="refresh")
 
@@ -31,6 +39,7 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
         globals.last_activity = now_time
         socketio.emit("mood")
 
+        # Poll latest sensor data with a timeout mechanism
         try:
             data_ok = False
             timeout = 12
@@ -47,19 +56,21 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
 
         if not data_ok:
             return jsonify(status="error")
+        
+        # =====================================================================
+        # SECTION 2: Advanced Affective Computing Pipeline & Telemetry
+        # =====================================================================
 
-        # ==================== ADVANCED AFFECTIVE COMPUTING PIPELINE ====================
-        # 1. Extract lexical sentiment polarity via Transformer
+        # 1. Extract lexical sentiment polarity via Transformer/LLM
         user_sentiment_score = analyze_user_sentiment(message, client, llm_model_name)
         
         # 2. Update continuous 2D coordinate systems and extract discrete mood label
         current_mood_label, V_instant, A_instant = update_plant_mood(sensors["sensor"], user_sentiment_score, delta_time)
         
-        # 3. CONSOLE TELEMETRY LOGGING (Data Science Tracking)
+        # 3. Console Telemetry Logging
         print("\n" + "="*70)
         print(f"[USER INPUT]      : '{message}'")
         print(f"[NLP POLARITY]    : Sentiment Score = {user_sentiment_score:.4f}")
-        print(f"[TIME DELTA]      : {f'{delta_time:.2f}s' if delta_time else 'First message'}")
         print("-"*70)
         print(f"[VALENCE STAGE]   : Instant = {V_instant:.4f}  --->  Smoothed (EMA) = {globals.smoothed_valence:.4f}")
         print(f"[AROUSAL STAGE]   : Instant = {A_instant:.4f}  --->  Smoothed (EMA) = {globals.smoothed_arousal:.4f}")
@@ -67,14 +78,17 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
         print(f"[CIRCUMPLEX MOOD] : Active State = {current_mood_label}")
         print("="*70 + "\n")
         
-        # 4. Sync physical hardware behaviors via Socket.IO
+        # 4. Sync physical hardware behaviors modes via Socket.IO
         if globals.angry:
             socketio.emit("angry_mode")
         elif globals.sad:
             socketio.emit("sad_mode")
         else:
             socketio.emit("reset_mood")
-        # ===============================================================================
+        
+        # =====================================================================
+        # SECTION 3: Plant State Evaluation & Multimodal Art Trigger (AI 1)
+        # =====================================================================
 
         try:
             state_res = flower_state(
@@ -93,13 +107,12 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
             globals.user["messages"] += 1
             threading.Thread(target=update_user, args=(db,),daemon=True).start()
 
+            # Inject contextual environmental metrics into prompt metadata
             info += f"- Weather: {globals.current_weather if globals.current_weather is not None else 'unknown'}.\n"
             info += f"- Current Emotional Mood: {current_mood_label}.\n"
             info += f"- Affect Coordinates: Valence={globals.smoothed_valence:.2f}, Arousal={globals.smoothed_arousal:.2f}.\n"
             info += "- Datetime: " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ".\n"
             info += "- Is day: " + ("yes" if is_day() else "no") + ".\n"
-            
-            # FIX: Accesso sicuro al nome utente
             info += f"- The user's name is {globals.user.get('name', 'Unknown')}.\n"
             info += "</plant_state>\n"
 
@@ -114,12 +127,11 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
                     "Acknowledge proudly that you are actively channeling your fluid dynamics into this ongoing biological growth process right now.\n"
                 )
 
-            # FIX: Passiamo lo stile e il soggetto alla pianta per dare contesto
             info += f"\n- VISUAL ELEMENTS: {globals.current_image_prompt}. (Style: {globals.current_medium}. Subject: {globals.current_canvas}).\n"
             info += f"\n- PAINTING EXPLANATION: {globals.current_explanation}\n"
             llm_input = info + "User input: " + message
 
-            # ==================== CONDITIONED MULTIMODAL ART GENERATION (AI 1) ====================
+            # Check if the plant's affective/environmental state has shifted enough to generate new art
             current_state = (state_res, globals.current_weather, current_mood_label)
 
             if current_state != globals.previous_plant_state:
@@ -142,9 +154,11 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
                 
         except Exception as e:
             print(f"CRITICAL ERROR prima del Dialogue Engine: {e}")
-        # ========================================================================================
+        
+        # =====================================================================
+        # SECTION 4: Dialogue Engine Execution & Response Logging (AI 2)
+        # =====================================================================
 
-        # ==================== DIALOGUE ENGINE (AI 2) ====================
         try:
             prediction_cleaned, globals.chat_history = ai_pipeline.get_dialogue_response(
                 client, llm_model_name, globals.chat_history, llm_input
@@ -155,7 +169,7 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
             except json.JSONDecodeError:
                 prediction_dict = prediction_cleaned
 
-            # Log interaction
+            # Asynchronously log interaction details to Firestore database
             threading.Thread(
                 target=send_log, 
                 args=(llm_input, None, prediction_cleaned, sensors, db), 
@@ -172,9 +186,13 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
             print(f"Error in Dialogue Engine: {e}")
             socketio.emit("response", "Sorry, I cannot talk right now.")
             return jsonify(status="success")
+        
+# =====================================================================
+# SECTION 5: Database Telemetry Logging Helper
+# =====================================================================
 
 def send_log(llm_input, thought, llm_response, sensors, db):
-    """Save a chat log entry to the 'chat' collection in Firestore."""
+    """Saves a detailed chat log entry snapshot to the 'chat' collection in Firestore."""
     try:
         if "User input:" in llm_input:
             user_input = llm_input.split("User input:")[1].strip()

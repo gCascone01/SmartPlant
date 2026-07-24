@@ -15,6 +15,10 @@ from modules.classes import Thresholds, NeedKeys # type: ignore
 from modules.chat_controller import register_chat_endpoint # type: ignore
 from modules.ai_pipeline import initialize_llm
 
+# =====================================================================
+# SECTION 1: Environment Setup & Argument Parsing
+# =====================================================================
+
 load_dotenv()  # Load environment variables from .env file
 
 parser = argparse.ArgumentParser()
@@ -27,9 +31,13 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
 
+# =====================================================================
+# SECTION 2: Core Application & External Service Initialization
+# =====================================================================
+
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
-# Initialize Firebase
+# Initialize Firebase Database
 json_filename = os.getenv("FIREBASE_JSON_NAME")
 if not json_filename:
     raise ValueError("FIREBASE_JSON_NAME not set in .env")
@@ -38,28 +46,28 @@ cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# Initialize Socket.IO
+# Initialize Socket.IO and Authentication Key for Raspberry Pi authentication
 socketio = SocketIO(app)
-
-# HMAC API key for Raspberry Pi authentication (from environment)
 API_KEY = os.environ.get("API_KEY").encode()
 
 # Configure logging to file
 logging.basicConfig(filename=os.path.join(BASE_DIR, 'access.log'), level=logging.INFO)
 
-# Initialize LLM.
+# Initialize LLM Client
 llm_api_key = os.getenv("LLM_API_KEY")
 client = OpenAI(api_key=llm_api_key, base_url="https://api.groq.com/openai/v1")
 llm_model_name = "llama-3.1-8b-instant"
 
-# Flask session secret
+# Flask session security and state configuration    
 app.secret_key = secrets.token_hex(16)
-
-# Current active web session id (only one user at a time)
 auto_logout = 600  # Auto logout timeout in seconds
 
 THRESHOLDS = Thresholds()
 KEYS = NeedKeys()
+
+# =====================================================================
+# SECTION 3: Middleware & Request Lifecycle Hooks
+# =====================================================================
 
 @app.before_request
 def log_request():
@@ -77,6 +85,10 @@ def add_header(response):
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '-1'
     return response
+
+# =====================================================================
+# SECTION 4: Module Route & Endpoint Registrations
+# =====================================================================
 
 socket_events.register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY)
 
@@ -102,6 +114,10 @@ register_chat_endpoint(
     is_day
 )
 
+# =====================================================================
+# SECTION 5: Main Execution & Background Worker Initialization
+# =====================================================================
+
 if __name__ == '__main__':
     global personality_check
 
@@ -109,11 +125,11 @@ if __name__ == '__main__':
 
     personality_check = "Server"
     initialize_thresholds(BASE_DIR, THRESHOLDS)
-
     initialize_keys(BASE_DIR, KEYS)
 
-    socketio.start_background_task(target=check_thresholds, BASE_DIR=BASE_DIR, globals_obj=globals, socketio_obj=socketio, initialize_thresholds_func=initialize_thresholds, THRESHOLDS=THRESHOLDS)
-
+    # Start background tasks for thresholds tracking, weather updates, and inactivity cleanup
+    socketio.start_background_task(target=check_thresholds, 
+                                   BASE_DIR=BASE_DIR, globals_obj=globals, socketio_obj=socketio, initialize_thresholds_func=initialize_thresholds, THRESHOLDS=THRESHOLDS)
     threading.Thread(target=weather_worker, args=(globals, fetch_weather), daemon=True).start()
 
     while globals.current_weather is None:
@@ -121,6 +137,7 @@ if __name__ == '__main__':
 
     socketio.start_background_task(target=auto_clear, socketio=socketio)
 
+    # Run the Flask-SocketIO development/production server
     socketio.run(
         app,
         host="0.0.0.0",

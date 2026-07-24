@@ -1,19 +1,22 @@
-import os
-import json
-import re
-import threading
-import requests # type: ignore
-import time
+import os, json, re, threading, requests, time # type: ignore
 from modules import globals # type: ignore
 
+# =====================================================================
+# SECTION 1: Artistic Pipeline & Generative Art Trigger
+# =====================================================================
+
 def generate_art(client, model_name, base_dir, info, reveal_duration, socketio):
-    """Gestisce la pipeline di generazione artistica."""
+    """
+    Manages the generative art pipeline by loading the system instructions, 
+    constructing the prompt with past context, and requesting a structured JSON response from the LLM.
+    """
+    
     try:
         prompt_path = os.path.join(base_dir, "system_prompt", "new_llm_prompt.txt")
         with open(prompt_path, "r", encoding="utf-8") as file:
             art_system_instruction = file.read()
 
-        # Input per l'AI
+        # Input for the AI combining current state and previous artwork context
         art_input = info + f"\n- Your PREVIOUS artwork was: {globals.current_explanation}\n- RULE: Pivot to a new subject."
 
         response = client.chat.completions.create(
@@ -28,7 +31,7 @@ def generate_art(client, model_name, base_dir, info, reveal_duration, socketio):
         content = re.sub(r'^```json\s*|```$', '', response.choices[0].message.content.strip(), flags=re.MULTILINE).strip()
         art_data = json.loads(content)
 
-        # Avvia il task in background passando socketio
+        # Launch background task to call the external image generation API
         threading.Thread(
             target=_run_image_generation_task, 
             args=(art_data, reveal_duration, base_dir, socketio), 
@@ -41,7 +44,11 @@ def generate_art(client, model_name, base_dir, info, reveal_duration, socketio):
         return None
 
 def _run_image_generation_task(art_data, reveal_duration, base_dir, socketio):
-    """Task di background per chiamare l'API esterna e inviare l'evento via socketio."""
+    """
+    Background task that calls the external image generation endpoint, 
+    saves the resulting asset, and broadcasts the metadata via Socket.IO.
+    """
+
     url = "http://150.140.142.76:9999/generate"
     payload = {
         "prompt": art_data.get("image_prompt", ""), 
@@ -58,7 +65,7 @@ def _run_image_generation_task(art_data, reveal_duration, base_dir, socketio):
             with open(save_path, "wb") as f:
                 f.write(res.content)
             
-            # Notifica il client via WebSocket
+            # Notify the client via WebSocket with reveal duration (the time it will take the plant to "paint") and metaphorical mapping
             socketio.emit("new_art_available", {
                 "duration": reveal_duration,
                 "medium": art_data.get("medium_and_style", ""),
@@ -70,11 +77,18 @@ def _run_image_generation_task(art_data, reveal_duration, base_dir, socketio):
     except Exception as e:
         print(f"Error in Image Gen: {e}")
 
+# =====================================================================
+# SECTION 2: Dialogue Engine & Conversational Processing
+# =====================================================================
+
 def get_dialogue_response(client, model_name, chat_history, llm_input):
-    """Gestisce l'interazione testuale con l'utente."""
+    """
+    Manages text-based interactions and dialogue history with the plant.
+    It sends the current user input along with the accumulated chat history to the LLM,
+    and appends the LLM's response back to the chat history for context in future interactions.
+    """
     chat_history.append({"role": "user", "content": llm_input})
 
-    # Ciclo di retry per robustezza (come avevi nel server)
     for attempt in range(3):
         try:
             response = client.chat.completions.create(
@@ -85,7 +99,6 @@ def get_dialogue_response(client, model_name, chat_history, llm_input):
             prediction = response.choices[0].message.content
             chat_history.append({"role": "assistant", "content": prediction})
             
-            # Pulizia JSON se necessario
             prediction_cleaned = re.sub(r'^```json\s*|```$', '', prediction.strip(), flags=re.MULTILINE).strip()
             return prediction_cleaned, chat_history
             
@@ -95,44 +108,48 @@ def get_dialogue_response(client, model_name, chat_history, llm_input):
             
     return "Sorry, I'm having trouble thinking.", chat_history
 
+# =====================================================================
+# SECTION 3: Reveal Kinetics & Plant Personality Initialization
+# =====================================================================
+
 def calculate_reveal_duration(sensor_data):
     """
-    Calcola la durata del Progressive Capillary Reveal (in ms) 
-    in funzione dello stress termico e idrico della pianta.
+    Calculates the duration of the Progressive Capillary Reveal (in milliseconds) 
+    dynamically based on the plant's thermal and water stress levels.
     """
-    base_duration = 180000  # 3 minuti (valore nominale)
+    base_duration = 180000  # 3 minutes 
     
-    # Coefficiente di stress termico (Temperatura ottimale > 18°C)
+    # Thermal stress coefficient (optimal temperature > 18°C)
     temp = sensor_data.get("temp", 22.0)
     low_temp = sensor_data.get("low_temp", False)
     high_temp = sensor_data.get("high_temp", False)
     
     if low_temp or temp < 18.0:
-        # Rallentamento cinetico proporzionale al freddo (fino a +150%)
+        # Kinetic slowdown proportional to cold conditions (up to +150%)
         alpha_T = 1.0 + min(1.5, (18.0 - temp) * 0.15)
     elif high_temp:
         alpha_T = 1.2
     else:
         alpha_T = 1.0
         
-    # Coefficiente di stress idrico (soil_moisture)
+    # Water stress coefficient (soil moisture levels)
     need_watering = sensor_data.get("need_watering", False)
     if need_watering:
-        # Incremento del tempo in base alla severità dell'inaridimento
+        # Increment in duration based on the severity of drought
         alpha_M = 1.5
         if sensor_data.get("soil_moisture", 0) > 2300:
             alpha_M = 2.1
     else:
         alpha_M = 1.0
         
-    # Calcolo del tempo totale combinato
+    # Total combined duration calculation
     total_duration = int(base_duration * alpha_T * alpha_M)
     
-    # Guardrail di sicurezza:bound tra 1.5 e 8 minuti
+    # Safety guardrails: bounded between 1.5 and 8 minutes
     return max(90000, min(480000, total_duration))
 
 def initialize_llm(choice, socketio, base_dir):
-    """Initialize LLM chat history with selected personality mood."""
+    """Initializes the LLM chat history and sets global mood parameters based on the personality."""
     if choice in ["Χαρούμενο", "Happy"]:
         globals.angry = False
         globals.sad = False

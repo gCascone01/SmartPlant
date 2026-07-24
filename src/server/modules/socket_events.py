@@ -8,13 +8,18 @@ from modules import globals # type: ignore
 from modules.tools import send_flower_need, request_completed # type: ignore
 
 def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
-
+    # =====================================================================
+    # SECTION 1: Hardware & Client Connection Management
+    # =====================================================================
+    # These events handle the initial handshake, security validation via HMAC, 
+    # and tracking whether the Raspberry Pi or a web browser is connecting/disconnecting.
     
     @socketio.on("connect")
     def handle_connect():
         """
-        Socket.IO handler: Accetta Raspberry Pi e Browser Web.
-        Salva il SID univoco del Raspberry per non confonderlo con il browser.
+        Socket.IO handler: Accepts Raspberry Pi and Web Browser connections.
+        Validates the Raspberry Pi using an HMAC signature to ensure hardware authenticity.
+        Saves the unique SID of the Raspberry to avoid confusing it with web clients.
         """
 
         auth = request.headers.get("Authorization")
@@ -36,6 +41,7 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
             globals.rsb_sid = request.sid  # Salva l'ID univoco della sessione del Raspberry
             print(f"-> Raspberry Pi connected (SID: {globals.rsb_sid})")
 
+            # Sync physical hardware mood indicators on successful connection
             if globals.angry:
                 socketio.emit("angry_mode")
             elif globals.sad:
@@ -49,20 +55,34 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
 
     @socketio.on("disconnect")
     def handle_disconnect():
-        """Socket.IO handler: Verifica CHI si è disconnesso."""
+        """
+        Socket.IO handler: Identifies which endpoint disconnected by comparing SIDs.
+        Updates global connectivity flags if the hardware goes offline.
+        """
 
-        # Se a disconnettersi è stato il Raspberry...
+        # If the disconnecting client is the Raspberry Pi...
         if request.sid == globals.rsb_sid:
             globals.rsb_connected = False
             globals.rsb_sid = None
             print("-> Raspberry Pi disconnected")
-        # Se a disconnettersi è stato il browser web...
+        # If the disconnecting client is a standard web browser...
         else:
             print("-> Web Browser disconnected")
 
+    # =====================================================================
+    # SECTION 2: Telemetry & Sensor Data Intake
+    # =====================================================================
+    # These events continuously receive data from the hardware sensors 
+    # and update global variables for the rest of the application to read.
+
+    @socketio.on("sensors_data")
+    def get_flower_status(data):
+        """Socket.IO handler: Receives the latest real-time sensor array data from the Raspberry Pi."""
+        globals.sensors_data = data
+
     @socketio.on("spray_status")
     def refresh_spray_status(data):
-        """Socket.IO handler: Update last spray status timestamp."""
+        """Socket.IO handler: Updates the global timestamp of the last time the leaves were sprayed."""
 
         if data.get("spray_status") is not None:
             globals.spray_status = datetime.strptime(
@@ -72,7 +92,7 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
 
     @socketio.on("water_time")
     def get_watered_time(data):
-        """Socket.IO handler: Update last watered time timestamp."""
+        """Socket.IO handler: Updates the global timestamp of the last time the plant was watered."""
 
         if data.get("last_water") is not None:
             globals.watered_time = datetime.strptime(
@@ -80,25 +100,24 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
         else:
             globals.watered_time = None
 
-    @socketio.on("send_weather")
-    def send_weather():
-        """Socket.IO handler: Send current weather to Raspberry Pi."""
-        if globals.current_weather is not None:
-            socketio.emit("weather", globals.current_weather)
-        else:
-            socketio.emit("weather", globals.current_weather)
+    # =====================================================================
+    # SECTION 3: Environmental Needs & Hardware Thresholds
+    # =====================================================================
+    # These events manage critical plant life-support requests, tracking when the plant 
+    # lacks resources (water, heat, light) and when those needs are finally met.
 
     @socketio.on("send_need")
     def check_flower_need(data):
         """
-        Socket.IO handler: Raspberry reports that a new need is active.
-
+        Socket.IO handler: The Raspberry Pi reports that a specific environmental need is active.
+        
         Logic:
-        - If we don't already have a key for that need (in KEYS), create a new
-            'flower_needs' document and store its id.
-        - Otherwise, just send back the existing key.
-        - Save KEYS to 'need_keys.json' so state survives server restarts.
+        - If we don't already have an active tracking key for that need, create a new
+          'flower_needs' document in Firestore and store its ID.
+        - Otherwise, send back the existing key to acknowledge we are tracking it.
+        - Persist the KEYS state locally to 'need_keys.json' to survive server reboots.
         """
+        
         try:
             need = data.get("need")
 
@@ -149,7 +168,7 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
                     socketio.emit(
                         "need_key", {"need_key": KEYS.high_light, "need": need})
 
-            # Save KEYS to 'need_keys.json'
+            # Save tracking keys to the local JSON config
             config_path = os.path.join(BASE_DIR, 'config', 'need_keys.json')
             with open(config_path, 'w', encoding='utf-8') as file:
                 data_to_write = asdict(KEYS)
@@ -161,18 +180,19 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
     @socketio.on("need_fulfilled")
     def fulfilled_need(data):
         """
-        Socket.IO handler: a previously reported need has been fulfilled.
+        Socket.IO handler: A previously reported need has been fulfilled by the user/environment.
 
-        Updates the corresponding 'flower_needs' document:
-        - sets 'fulfilled' timestamp,
-        - optionally sets 'sprayed' flag for low_humidity,
-        - stores which user was connected when it was fulfilled,
-        - clears the key from KEYS.
+        Updates the corresponding Firestore document:
+        - Sets the 'fulfilled' timestamp.
+        - Optionally logs the 'sprayed' boolean flag for low_humidity events.
+        - Stores the ID of the user connected at the time of fulfillment.
+        - Clears the active tracking key so new alerts can be generated in the future.
         """
 
         try:
             key = data.get("key")
 
+            # Link the fulfillment to the active user if they intervened recently
             if globals.user and datetime.now() - globals.last_activity < timedelta(minutes=3):
                 id = globals.user["user_id"]
                 globals.user["requests_fulfilled"] = True
@@ -194,7 +214,7 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
                     "user connected on fulfillment": id
                 })
 
-            # Clear corresponding key from KEYS
+            # Clear corresponding key from the active trackers
             if KEYS.water == key:
                 KEYS.water = None
             elif KEYS.spray == key:
@@ -216,18 +236,17 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
         except Exception as e:
             print("Error on fulfilling flower need", e)
 
-    @socketio.on("sensors_data")
-    def get_flower_status(data):
-        """Socket.IO handler: receive latest sensor data from Raspberry."""
-        globals.sensors_data = data
-
     @socketio.on("get_thresholds")
     def get_thresholds():
-        """Socket.IO handler: Send current thresholds to Raspberry Pi."""
+        """
+        Socket.IO handler: The Raspberry Pi is requesting the latest environmental parameters.
+        Reads the local JSON file and transmits the thresholds over WebSockets.
+        """
 
         with open("plant_thresholds.json", 'r', encoding='utf-8') as file:
             file_thresholds = json.load(file)
 
+        # Dynamic override based on weather
         if globals.change_threshold:
             file_thresholds["light_min"] = 100
 
@@ -247,10 +266,23 @@ def register_socket_events(socketio, db, BASE_DIR, KEYS, API_KEY):
 
         socketio.emit("thresholds", thresholds)
 
+    # =====================================================================
+    # SECTION 4: Miscellaneous Actions (Weather & Remote Commands)
+    # =====================================================================
+
+    @socketio.on("send_weather")
+    def send_weather():
+        """Socket.IO handler: Broadcasts current localized weather data to the Raspberry Pi."""
+
+        if globals.current_weather is not None:
+            socketio.emit("weather", globals.current_weather)
+        else:
+            socketio.emit("weather", globals.current_weather)
+
     @socketio.on("request_completed")
     def request_completed_received(data):
         """
-        Socket.IO handler: Raspberry reports that a random request was completed
-        (either watering or spray).
+        Socket.IO handler: The hardware confirms that a random remote request 
+        (like physical watering or spraying) has been successfully executed.
         """
         request_completed(data.get("request"), db)
