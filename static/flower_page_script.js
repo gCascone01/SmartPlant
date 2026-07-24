@@ -500,27 +500,3 @@ function appendMessage(sender, text, className) {
     // Auto-scroll to the newest message
     historyContainer.scrollTop = historyContainer.scrollHeight;
 }
-
-document.getElementById("force_art_button").addEventListener("click", () => {
-    
-    let chatInput = document.getElementById('message');
-    let originalPlaceholder = chatInput.placeholder;
-    chatInput.placeholder = "Simulating environment and generating art..."; 
-
-    fetch("/force_art", {
-        method: "POST"
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.status === "success") {
-            console.log("Forced art command sent successfully.");
-        } else if (data.status === "no_connection") {
-            alert("No connection to Raspberry Pi");
-            chatInput.placeholder = originalPlaceholder;
-        }
-    })
-    .catch(error => {
-        console.error("Error: ", error);
-        chatInput.placeholder = originalPlaceholder;
-    });
-});

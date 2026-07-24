@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import os
-import csv
 import requests
 import secrets
 import pytz
@@ -27,10 +26,16 @@ from openai import OpenAI
 import json
 import math
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+template_dir = os.path.join(BASE_DIR, 'templates')
+static_dir = os.path.join(BASE_DIR, 'static')
+
+app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
 # Initialize Firebase
-cred = credentials.Certificate("smartplant-f8c09-firebase-adminsdk-fbsvc-cdf41b5af3.json")
+cred_path = os.path.join(BASE_DIR, "smartplant-f8c09-firebase-adminsdk-fbsvc-cdf41b5af3.json")
+cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred)
 db = firestore.client()
 
@@ -42,7 +47,7 @@ API_KEY = os.environ.get("API_KEY").encode()
 
 # Configure logging to file
 
-logging.basicConfig(filename='access.log', level=logging.INFO)
+logging.basicConfig(filename=os.path.join(BASE_DIR, 'access.log'), level=logging.INFO)
 
 # lms.configure_default_client("150.140.142.84:1234")
 
@@ -456,7 +461,7 @@ def flower_response():
             
             reveal_duration = calculate_reveal_duration(sensors["sensor"])
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            prompt_path = os.path.join(base_dir, "system_prompt", "new_llm_prompt.txt")
+            prompt_path = os.path.join(BASE_DIR, "system_prompt", "new_llm_prompt.txt")
             
             with open(prompt_path, "r", encoding="utf-8") as file:
                 art_system_instruction = file.read()
@@ -1195,7 +1200,8 @@ def check_flower_need(data):
                     "need_key", {"need_key": KEYS.high_light, "need": need})
 
         # Save KEYS to 'need_keys.json'
-        with open("need_keys.json", 'w', encoding='utf-8') as file:
+        config_path = os.path.join(BASE_DIR, 'config', 'need_keys.json')
+        with open(config_path, 'w', encoding='utf-8') as file:
             data_to_write = asdict(KEYS)
             json.dump(data_to_write, file, indent=4,)
 
@@ -1253,7 +1259,8 @@ def fulfilled_need(data):
         elif KEYS.high_light == key:
             KEYS.high_light = None
 
-        with open("need_keys.json", 'w', encoding='utf-8') as file:
+        config_path = os.path.join(BASE_DIR, 'config', 'need_keys.json')
+        with open(config_path, 'w', encoding='utf-8') as file:
             data_to_write = asdict(KEYS)
             json.dump(data_to_write, file, indent=4,)
 
@@ -1376,8 +1383,10 @@ def get_thresholds():
 
 
 def initialize_thresholds():
-    """Load thresholds from 'plant_thresholds.json' into the global THRESHOLDS object."""
-    with open("plant_thresholds.json", 'r', encoding='utf-8') as file:
+    """Load thresholds from 'config/plant_thresholds.json' into the global THRESHOLDS object."""
+    # Build the path dynamically: go up two levels from src/server to the root, then into config/
+    config_path = os.path.join(BASE_DIR, 'config', 'plant_thresholds.json')
+    with open(config_path, 'r', encoding='utf-8') as file:
         thresholds = json.load(file)
 
     if change_threshold:
@@ -1395,9 +1404,9 @@ def check_thresholds():
     """Background task: Monitor 'plant_thresholds.json' for changes and notify Raspberry Pi."""
     global thresholds_to_check, change_threshold
 
+    config_path = os.path.join(BASE_DIR, 'config', 'plant_thresholds.json')
     while True:
-
-        with open("plant_thresholds.json", 'r', encoding='utf-8') as file:
+        with open(config_path, 'r', encoding='utf-8') as file:
             thresholds = json.load(file)
 
         # Initialize thresholds
@@ -1424,9 +1433,10 @@ def check_thresholds():
 def initialize_keys():
     """Initialize KEYS dataclass from 'need_keys.json'."""
     global KEYS
-
+    
+    config_path = os.path.join(BASE_DIR, 'config', 'need_keys.json')
     try:
-        with open("need_keys.json", 'r', encoding='utf-8') as file:
+        with open(config_path, 'r', encoding='utf-8') as file:
             data_from_file = json.load(file)
             KEYS = NeedKeys(**data_from_file)
     except FileNotFoundError:
@@ -1458,7 +1468,8 @@ def run_image_generation(prompt, reveal_duration, medium="", canvas="", mapping=
     try:
         res = requests.post(url, json=payload, timeout=120)
         if res.status_code == 200:
-            with open("art.png", "wb") as f:
+            art_path = os.path.join(BASE_DIR, "assets", "art.png")
+            with open(art_path, "wb") as f:
                 f.write(res.content)
             print("New artwork saved successfully as art.png")
             # --- MODIFICA QUI: Invia tutti i dati al client ---
@@ -1476,9 +1487,10 @@ def run_image_generation(prompt, reveal_duration, medium="", canvas="", mapping=
 
 @app.route('/get_art', methods=['GET'])
 def get_art():
+    art_path = os.path.join(BASE_DIR, "assets", "art.png")
     """Endpoint exposing the generated art file for download by the Pi."""
-    if os.path.exists("art.png"):
-        return send_file("art.png", mimetype="image/png")
+    if os.path.exists(art_path):
+        return send_file(art_path, mimetype="image/png")
     return jsonify(error="No art piece compiled yet"), 404
 
 def calculate_reveal_duration(sensor_data):

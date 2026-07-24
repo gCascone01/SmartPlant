@@ -1,10 +1,8 @@
-import socketio
-import requests
+import socketio # type: ignore
 import hmac
 import hashlib
 import time
 import os
-from PIL import Image
 
 sio = socketio.Client()
 
@@ -51,18 +49,6 @@ def on_new_art(data):
     print(f"🧠  Mappatura    : {data.get('mapping', 'N/A')}")
     print(f"💬  Spiegazione  : {data.get('explanation', 'N/A')}")
     print("="*70 + "\n")
-    
-    print("[Signal Received] Downloading new artwork...")
-    try:
-        res = requests.get(f"{SERVER_URL}/get_art", timeout=30)
-        if res.status_code == 200:
-            with open("simulated_art.png", "wb") as f:
-                f.write(res.content)
-            print("Artwork saved as 'simulated_art.png'. Opening visual frame...")
-        else:
-            print(f"Failed to fetch art from server. Status: {res.status_code}")
-    except Exception as e:
-        print(f"Error downloading image asset: {e}")
 
 @sio.on("response")
 def on_response(data):

@@ -1,8 +1,6 @@
-from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QTextEdit, QSpacerItem, QSizePolicy, QFrame
-from PyQt5.QtGui import QPixmap, QFont, QMovie
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
-from PyQt5.QtWidgets import QGraphicsOpacityEffect
-from PyQt5.QtCore import QPropertyAnimation
+from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QTextEdit, QSpacerItem, QSizePolicy, QFrame # type: ignore
+from PyQt5.QtGui import QPixmap, QFont, QMovie # type: ignore
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer # type: ignore
 
 
 class Display(QWidget):
