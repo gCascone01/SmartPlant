@@ -6,7 +6,7 @@ from modules import globals, ai_pipeline # type: ignore
 from modules.affective_engine import analyze_user_sentiment, update_plant_mood # type: ignore
 from modules.tools import flower_state # type: ignore
 
-def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, random_requests, db, update_user, send_log, BASE_DIR, is_day):
+def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, random_requests, db, update_user, BASE_DIR, is_day):
     
     @app.route('/message', methods=['POST'])
     def flower_response():
@@ -158,7 +158,7 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
             # Log interaction
             threading.Thread(
                 target=send_log, 
-                args=(llm_input, None, prediction_cleaned, sensors), 
+                args=(llm_input, None, prediction_cleaned, sensors, db), 
                 daemon=True
             ).start()
 
@@ -172,3 +172,43 @@ def register_chat_endpoint(app, socketio, client, llm_model_name, THRESHOLDS, ra
             print(f"Error in Dialogue Engine: {e}")
             socketio.emit("response", "Sorry, I cannot talk right now.")
             return jsonify(status="success")
+
+def send_log(llm_input, thought, llm_response, sensors, db):
+    """Save a chat log entry to the 'chat' collection in Firestore."""
+    try:
+        if "User input:" in llm_input:
+            user_input = llm_input.split("User input:")[1].strip()
+        else:
+            user_input = None
+
+        chat = {
+            "time": datetime.now(),
+            "user_id": globals.active_session_id,
+            "username": globals.user.get("name", "Unknown"),
+            "llm_input": llm_input,
+            "user_input": user_input,
+            "thought": thought,
+            "llm_response": llm_response,
+            "temperature": sensors["sensor"]["temp"],
+            "soil_moisture": sensors["sensor"]["soil_moisture"],
+            "air_moisture": sensors["sensor"]["air_moisture"],
+            "lux": sensors["sensor"]["lux"],
+            "spray_status": sensors["sensor"]["spray_status"],
+            "mood": sensors["sensor"]["mood"],
+            "low_humidity": sensors["sensor"]["low_humidity"],
+            "need_watering": sensors["sensor"]["need_watering"],
+            "low_temp": sensors["sensor"]["low_temp"],
+            "high_temp": sensors["sensor"]["high_temp"],
+            "random_water": globals.random_watering,
+            "random_spray": globals.random_spray,
+            "personality": "angry" if globals.angry else "sad" if globals.sad else "happy",
+            "art_medium": globals.current_medium,
+            "art_canvas": globals.current_canvas,
+            "art_mapping": globals.current_mapping,
+            "art_explanation": globals.current_explanation
+        }
+
+        db.collection("chat").add(chat)
+
+    except Exception as e:
+        print("Error sending log: ", e)

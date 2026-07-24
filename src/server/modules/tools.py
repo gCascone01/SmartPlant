@@ -105,7 +105,7 @@ def weather_worker(globals_obj, fetch_weather_func, interval=1700):
             globals_obj.change_threshold = False
         time.sleep(interval)
 
-def check_thresholds(BASE_DIR, globals_obj, socketio_obj, initialize_thresholds_func, sleep_time=60):
+def check_thresholds(BASE_DIR, globals_obj, socketio_obj, initialize_thresholds_func, THRESHOLDS, sleep_time=60):
     """Background task: Monitor 'plant_thresholds.json' for changes and notify Raspberry Pi."""
     config_path = os.path.join(BASE_DIR, 'config', 'plant_thresholds.json')
     while True:
@@ -120,7 +120,7 @@ def check_thresholds(BASE_DIR, globals_obj, socketio_obj, initialize_thresholds_
 
             if thresholds != globals_obj.thresholds_to_check:
                 globals_obj.thresholds_to_check = thresholds.copy()
-                initialize_thresholds_func()
+                initialize_thresholds_func(BASE_DIR, THRESHOLDS)
 
                 if globals_obj.rsb_connected:
                     socketio_obj.emit("thresholds_updated")
@@ -199,3 +199,25 @@ def auto_clear(socketio):
             globals.user_flag = False
 
         socketio.sleep(10)
+
+def request_completed(request_type, db):
+    """
+    Mark the corresponding random 'requests' document as fulfilled
+    and reset random_watering / random_spray flags.
+    """
+    if request_type == "water" and globals.random_watering and datetime.now() - globals.random_watering_time < timedelta(minutes=3):
+        globals.random_watering = False
+        globals.random_watering_time = None
+        req = db.collection("requests").document(globals.request_key)
+        globals.request_key = None
+        req.update({
+            "fulfilled": datetime.now()
+        })
+    elif request_type == "spray":
+        req = db.collection("requests").document(globals.request_key)
+        globals.request_key = None
+        globals.random_spray_time = None
+        globals.random_spray = False
+        req.update({
+            "fulfilled": datetime.now()
+        })

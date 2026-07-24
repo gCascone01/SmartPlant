@@ -130,3 +130,24 @@ def calculate_reveal_duration(sensor_data):
     
     # Guardrail di sicurezza:bound tra 1.5 e 8 minuti
     return max(90000, min(480000, total_duration))
+
+def initialize_llm(choice, socketio, base_dir):
+    """Initialize LLM chat history with selected personality mood."""
+    if choice in ["Χαρούμενο", "Happy"]:
+        globals.angry = False
+        globals.sad = False
+        socketio.emit("reset_mood")
+    elif choice in ["Γκρινιάρικο", "Grumpy"]:
+        globals.angry = True
+        globals.sad = False
+        socketio.emit("angry_mode")
+    elif choice in ["Λυπημένο", "Sad"]:
+        globals.angry = False
+        globals.sad = True
+        socketio.emit("sad_mode")
+
+    prompt_path = os.path.join(base_dir, "system_prompt", "llm_prompt_v2.txt")
+    with open(prompt_path, 'r', encoding='utf-8') as file:
+        llm_prompt = file.read()
+
+    globals.chat_history = [{"role": "system", "content": llm_prompt}]
